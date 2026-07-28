@@ -42,6 +42,8 @@ from moseq2_extract.util import (
     clean_dict,
     graduate_dilated_wall_area,
     get_bucket_center,
+    estimate_depth_range,
+    plot_depth_range_diagnostic,
     h5_to_dict,
     detect_and_set_camera_parameters,
     get_frame_range_indices,
@@ -270,14 +272,20 @@ def get_roi_wrapper(input_file, config_data, output_dir=None):
             "set the min and max range values to +/-50mm of the actual camera height."
         )
 
-        cX, cY = get_bucket_center(
-            bground_im, bground_im.max(), threshold=int(np.median(bground_im) / 2)
+        # estimate the floor depth from the mode of the whole background image
+        # rather than a single (possibly dropped-out) centroid pixel
+        config_data["bg_roi_depth_range"] = estimate_depth_range(bground_im)
+        print(
+            f"Estimated bg_roi_depth_range: {config_data['bg_roi_depth_range']}. "
+            "Check depth_range_diagnostic.png in the output directory and set "
+            '"manual_set_depth_range" if this looks wrong.'
         )
-        adjusted_bg_depth_range = bground_im[cY][cX]
-        config_data["bg_roi_depth_range"] = [
-            int(adjusted_bg_depth_range - 50),
-            int(adjusted_bg_depth_range + 50),
-        ]
+        # write a histogram diagnostic so ambiguous scenes can be eyeballed
+        plot_depth_range_diagnostic(
+            bground_im,
+            config_data["bg_roi_depth_range"],
+            join(output_dir, "depth_range_diagnostic.png"),
+        )
 
     # pass in config_data['finfo']['dims'] for frame size otherwise frame size is hard coded to 512x424
     first_frame = load_movie_data(

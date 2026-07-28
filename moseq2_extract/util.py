@@ -926,6 +926,122 @@ def click_param_annot(click_cmd):
             annotations[p.human_readable_name] = p.help
     return annotations
 
+def estimate_depth_range(bground_im, pad_floor=50, bins=200):
+    """
+    Estimate the arena-floor depth range from a background image.
+
+    Replaces sampling a single (possibly dropped-out) pixel at the image
+    centroid. Instead it histograms every valid depth pixel, finds the candidate
+    modes, and selects the one whose thresholded pixels form the largest compact
+    connected region (favouring a region that covers the frame center). The
+    padding around the chosen mode is derived from the actual spread of the
+    floor pixels (95% span and MAD) with a floor of ``pad_floor`` mm, so a tilted
+    or wide arena that spans more than +/-50 mm is captured.
+
+    Args:
+    bground_im (numpy.ndarray): background depth image (mm).
+    pad_floor (int): minimum +/- padding (mm) around the detected floor mode.
+    bins (int): number of histogram bins.
+
+    Returns:
+    depth_range (list): [min, max] depth (mm) bracketing the arena floor.
+    """
+
+    finite = bground_im[np.isfinite(bground_im) & (bground_im > 0)]
+    if finite.size == 0:
+        raise ValueError(
+            "Background image has no valid (finite, nonzero) depth pixels to "
+            "estimate a floor depth range from."
+        )
+
+    counts, edges = np.histogram(finite, bins=bins)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    smooth = np.convolve(counts, np.ones(5) / 5.0, mode="same")
+
+    # candidate floor modes = local maxima of the smoothed histogram
+    peaks = [
+        i
+        for i in range(1, len(smooth) - 1)
+        if smooth[i] >= smooth[i - 1] and smooth[i] > smooth[i + 1] and smooth[i] > 0
+    ]
+    if not peaks:
+        peaks = [int(np.argmax(smooth))]
+
+    H, W = bground_im.shape
+    cy, cx = H // 2, W // 2
+
+    best_score, best_center = -1.0, float(centers[int(np.argmax(smooth))])
+    for p in peaks:
+        lo, hi = centers[p] - pad_floor, centers[p] + pad_floor
+        mask = ((bground_im >= lo) & (bground_im <= hi)).astype("uint8")
+        n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            mask, connectivity=8
+        )
+        if n_labels <= 1:
+            continue
+        # largest connected component that is not the background label (0)
+        comp = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        area = float(stats[comp, cv2.CC_STAT_AREA])
+        bw, bh = stats[comp, cv2.CC_STAT_WIDTH], stats[comp, cv2.CC_STAT_HEIGHT]
+        fill = area / max(1.0, float(bw * bh))  # bounding-box fill => compactness
+        covers_center = labels[cy, cx] == comp
+        score = area * fill * (2.0 if covers_center else 1.0)
+        if score > best_score:
+            best_score, best_center = score, float(centers[p])
+
+    # derive the pad from the spread of pixels that belong to the chosen mode
+    band = finite[np.abs(finite - best_center) <= 3 * pad_floor]
+    if band.size:
+        lo_pct, hi_pct = np.percentile(band, [2.5, 97.5])
+        mad = 1.4826 * np.median(np.abs(band - np.median(band)))
+        pad = max(float(pad_floor), (hi_pct - lo_pct) / 2.0, 2.0 * mad)
+    else:
+        pad = float(pad_floor)
+
+    return [int(round(best_center - pad)), int(round(best_center + pad))]
+
+
+def plot_depth_range_diagnostic(bground_im, depth_range, output_path, bins=200):
+    """
+    Save a depth-histogram diagnostic showing the detected floor range.
+
+    Ambiguous scenes (e.g. a small arena with a large room floor behind it)
+    cannot be resolved by any unsupervised heuristic, so this writes a figure
+    that lets a human confirm the automatically chosen range at a glance.
+
+    Args:
+    bground_im (numpy.ndarray): background depth image (mm).
+    depth_range (list): the [min, max] depth range that was selected.
+    output_path (str): path to write the PNG diagnostic to.
+    bins (int): number of histogram bins.
+
+    Returns:
+    output_path (str): the path the figure was written to (or None on failure).
+    """
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        finite = bground_im[np.isfinite(bground_im) & (bground_im > 0)]
+        fig, ax = plt.subplots(figsize=(7, 4))
+        ax.hist(finite.ravel(), bins=bins, color="0.6")
+        ax.axvspan(depth_range[0], depth_range[1], color="tab:green", alpha=0.25,
+                   label=f"selected range {depth_range}")
+        ax.set_xlabel("Depth from camera (mm)")
+        ax.set_ylabel("Pixel count")
+        ax.set_title("Background depth distribution and detected floor range")
+        ax.legend(loc="upper right")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=120)
+        plt.close(fig)
+        return output_path
+    except Exception as e:
+        warnings.warn(f"Could not write depth-range diagnostic plot: {e}")
+        return None
+
+
 def get_bucket_center(img, true_depth, threshold=650):
     """
     Find Centroid coordinates of circular bucket.
