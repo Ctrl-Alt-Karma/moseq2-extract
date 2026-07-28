@@ -114,6 +114,16 @@ def plane_ransac(
 
     if mask is not None:
         use_points = np.logical_and(use_points, mask)
+        # re-check AFTER masking: the guard above only saw the depth-range
+        # filter, so a restrictive mask can still leave too few points. Sampling
+        # 3 points without replacement from fewer than 3 raises a bare numpy
+        # ValueError, so fail here with something actionable instead.
+        if np.sum(use_points) <= 10:
+            raise ValueError(
+                f"Too few datapoints remain after applying the ROI mask to depth "
+                f'range {bg_roi_depth_range} -- data point count: {np.sum(use_points)}. '
+                "Check the mask and the depth range for this session."
+            )
 
     xx, yy = np.meshgrid(
         np.arange(depth_image.shape[1]), np.arange(depth_image.shape[0])
