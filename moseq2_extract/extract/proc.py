@@ -582,7 +582,10 @@ def compute_scalars(frames, track_features, min_height=10, max_height=100, true_
 
     features['width_mm'] = features['width_px'] * px_to_mm[:, 1]
     features['length_mm'] = features['length_px'] * px_to_mm[:, 0]
-    features['area_mm'] = features['area_px'] * px_to_mm.mean(axis=1)
+    # area_px is a pixel count (px^2), so converting it to mm^2 requires the
+    # product of the x and y linear factors. Multiplying by the mean linear
+    # factor left the result in px*mm and under-reported area by that factor.
+    features['area_mm'] = features['area_px'] * px_to_mm[:, 0] * px_to_mm[:, 1]
 
     features['angle'] = track_features['orientation']
 
@@ -628,29 +631,38 @@ def feature_hampel_filter(features, centroid_hampel_span=None, centroid_hampel_s
     Returns:
     features (dict): filtered version of input dict.
     """
+    # A Hampel filter flags a sample when |x - median| exceeds n_sigma * MAD.
+    # The threshold below is scaled by 1.4826 so MAD estimates the standard
+    # deviation of normally distributed data, making *_hampel_sig a number of
+    # standard deviations as its name implies. Previously the threshold was
+    # `med + sig * mad`, i.e. it added the median *position* (hundreds of
+    # pixels) to the tolerance, so the filter never removed anything.
     if centroid_hampel_span is not None and centroid_hampel_span > 0:
         padded_centroids = np.pad(features['centroid'],
                                   (((centroid_hampel_span // 2, centroid_hampel_span // 2)),
                                    (0, 0)),
                                   'constant', constant_values = np.nan)
-        for i in range(1):
+        # filter both the x and y coordinates; this previously ran range(1) and
+        # so never filtered the y coordinate at all
+        for i in range(features['centroid'].shape[1]):
             vws = strided_app(padded_centroids[:, i], centroid_hampel_span, 1)
             med = np.nanmedian(vws, axis=1)
             mad = np.nanmedian(np.abs(vws - med[:, None]), axis=1)
             vals = np.abs(features['centroid'][:, i] - med)
-            fill_idx = np.where(vals > med + centroid_hampel_sig * mad)[0]
+            fill_idx = np.where(vals > centroid_hampel_sig * 1.4826 * mad)[0]
             features['centroid'][fill_idx, i] = med[fill_idx]
 
+    if angle_hampel_span is not None and angle_hampel_span > 0:
+        # built here rather than inside the centroid branch above, where it was
+        # unreachable when only the angle filter was enabled (UnboundLocalError)
         padded_orientation = np.pad(features['orientation'],
                                     (angle_hampel_span // 2, angle_hampel_span // 2),
                                     'constant', constant_values = np.nan)
-
-    if angle_hampel_span is not None and angle_hampel_span > 0:
         vws = strided_app(padded_orientation, angle_hampel_span, 1)
         med = np.nanmedian(vws, axis=1)
         mad = np.nanmedian(np.abs(vws - med[:, None]), axis=1)
         vals = np.abs(features['orientation'] - med)
-        fill_idx = np.where(vals > med + angle_hampel_sig * mad)[0]
+        fill_idx = np.where(vals > angle_hampel_sig * 1.4826 * mad)[0]
         features['orientation'][fill_idx] = med[fill_idx]
 
     return features
