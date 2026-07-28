@@ -973,9 +973,15 @@ def estimate_depth_range(bground_im, pad_floor=50, bins=200):
     best_score, best_center = -1.0, float(centers[int(np.argmax(smooth))])
     for p in peaks:
         lo, hi = centers[p] - pad_floor, centers[p] + pad_floor
-        mask = ((bground_im >= lo) & (bground_im <= hi)).astype("uint8")
+        mask = np.ascontiguousarray(
+            ((bground_im >= lo) & (bground_im <= hi)).astype("uint8"))
+        # NOTE: pass connectivity and ltype POSITIONALLY. In the pinned
+        # opencv-python 4.1.2 the keyword form
+        # `connectedComponentsWithStats(mask, connectivity=8)` segfaults on
+        # full-size depth masks (verified on a 424x512 frame); supplying ltype
+        # explicitly avoids the faulty binding overload.
         n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-            mask, connectivity=8
+            mask, 8, cv2.CV_32S
         )
         if n_labels <= 1:
             continue
@@ -984,8 +990,15 @@ def estimate_depth_range(bground_im, pad_floor=50, bins=200):
         area = float(stats[comp, cv2.CC_STAT_AREA])
         bw, bh = stats[comp, cv2.CC_STAT_WIDTH], stats[comp, cv2.CC_STAT_HEIGHT]
         fill = area / max(1.0, float(bw * bh))  # bounding-box fill => compactness
-        covers_center = labels[cy, cx] == comp
-        score = area * fill * (2.0 if covers_center else 1.0)
+        # Score how much of a central WINDOW the component covers rather than
+        # testing the single centre pixel. A dropped-out centre pixel would
+        # otherwise deny every candidate the centre bonus, letting a larger
+        # off-centre surface (e.g. the arena walls) win -- the exact
+        # single-pixel fragility this function exists to remove.
+        half_h, half_w = max(1, H // 8), max(1, W // 8)
+        window = labels[cy - half_h:cy + half_h, cx - half_w:cx + half_w]
+        centre_frac = float((window == comp).mean()) if window.size else 0.0
+        score = area * fill * (1.0 + centre_frac)
         if score > best_score:
             best_score, best_center = score, float(centers[p])
 
