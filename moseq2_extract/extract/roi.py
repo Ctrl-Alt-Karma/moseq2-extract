@@ -39,6 +39,42 @@ def plane_fit3(points):
     return plane
 
 
+def plane_fit_lstsq(points):
+    """
+    Fit a plane to N (>=3) points by total least squares (SVD).
+
+    Unlike ``plane_fit3``, which is defined by exactly three points, this fits
+    the plane that minimizes the squared orthogonal distance to every point,
+    so the floor reference is defined by all inliers rather than three noisy
+    samples.
+
+    Args:
+    points (numpy.ndarray): (N, 3) array of x, y, z coordinates.
+
+    Returns:
+    plane (numpy.array): linear plane fit --> a*x + b*y + c*z + d, unit normal.
+    """
+
+    if points.shape[0] < 3:
+        plane = np.empty((4,))
+        plane[:] = np.nan
+        return plane
+
+    centroid = points.mean(axis=0)
+    # smallest right-singular vector of the centered points is the plane normal
+    _, _, vh = np.linalg.svd(points - centroid, full_matrices=False)
+    normal = vh[-1]
+    norm = np.linalg.norm(normal)
+    if norm < np.spacing(1):
+        plane = np.empty((4,))
+        plane[:] = np.nan
+        return plane
+
+    normal = normal / norm
+    d = -np.dot(normal, centroid)
+    return np.hstack((normal, d))
+
+
 def plane_ransac(
     depth_image,
     bg_roi_depth_range=(650, 750),
@@ -94,12 +130,13 @@ def plane_ransac(
 
     best_dist = np.inf
     best_num = 0
+    best_plane = None
 
     npoints = np.sum(use_points)
 
     for _ in tqdm(range(iters), disable=not progress_bar, desc="Finding plane"):
 
-        sel = coords[np.random.choice(coords.shape[0], 3, replace=True)]
+        sel = coords[np.random.choice(coords.shape[0], 3, replace=False)]
         tmp_plane = plane_fit3(sel)
 
         if np.all(np.isnan(tmp_plane)):
@@ -109,14 +146,32 @@ def plane_ransac(
         inliers = dist < noise_tolerance
         ninliers = np.sum(inliers)
 
-        if (
-            (ninliers / npoints) > in_ratio
-            and ninliers > best_num
-            and np.mean(dist) < best_dist
-        ):
-            best_dist = np.mean(dist)
-            best_num = ninliers
-            best_plane = tmp_plane
+        # score on inlier count; break ties on mean distance of the inliers
+        # (not of all points, which would penalize planes that fit the floor
+        # tightly while an object sits on it)
+        if (ninliers / npoints) > in_ratio:
+            mean_inlier_dist = dist[inliers].mean() if ninliers > 0 else np.inf
+            if ninliers > best_num or (
+                ninliers == best_num and mean_inlier_dist < best_dist
+            ):
+                best_dist = mean_inlier_dist
+                best_num = ninliers
+                best_plane = tmp_plane
+
+    if best_plane is None:
+        raise ValueError(
+            "RANSAC could not find a plane: no candidate exceeded the required "
+            f"inlier ratio ({in_ratio}) within depth range {bg_roi_depth_range} "
+            f"at noise tolerance {noise_tolerance}. Try widening the depth range "
+            "or increasing the noise tolerance."
+        )
+
+    # refit the plane to the full set of inliers by least squares, so the floor
+    # reference reflects every pixel that agrees with it, not the 3 that seeded it
+    inliers = np.abs(np.dot(coords, best_plane[:3]) + best_plane[3]) < noise_tolerance
+    refit_plane = plane_fit_lstsq(coords[inliers])
+    if not np.any(np.isnan(refit_plane)):
+        best_plane = refit_plane
 
     # fit the plane to our x,y,z coordinates
     coords = np.vstack((xx.ravel(), yy.ravel(), depth_image.ravel())).T

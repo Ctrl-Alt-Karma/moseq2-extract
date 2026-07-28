@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.testing as npt
 from unittest import TestCase
-from moseq2_extract.extract.roi import plane_fit3, plane_ransac
+from moseq2_extract.extract.roi import plane_fit3, plane_fit_lstsq, plane_ransac
 
 
 class TestExtractROI(TestCase):
@@ -55,3 +55,36 @@ class TestExtractROI(TestCase):
         norma = -a[0] / a[0][2]
 
         npt.assert_almost_equal(np.round(norma[[0, 1]]), np.array([2, 5]), 1)
+
+    def test_plane_fit_lstsq_beats_three_point(self):
+        # least-squares plane fit over many noisy points should recover the
+        # plane far better than a fit through only three of them
+        np.random.seed(0)
+        xx, yy = np.meshgrid(np.arange(60), np.arange(60))
+        xy = np.vstack((xx.ravel(), yy.ravel())).T.astype("float64")
+        z = 0.05 * xy[:, 0] + 0.03 * xy[:, 1] + 700 + np.random.normal(0, 3, len(xy))
+        pts = np.hstack((xy, z[:, None]))
+
+        lstsq = plane_fit_lstsq(pts)
+        three = plane_fit3(pts[np.random.choice(len(pts), 3, replace=False)])
+
+        def coeffs(p):
+            return np.array([-p[0] / p[2], -p[1] / p[2]])
+
+        lstsq_err = np.abs(coeffs(lstsq) - np.array([0.05, 0.03])).sum()
+        three_err = np.abs(coeffs(three) - np.array([0.05, 0.03])).sum()
+        assert lstsq_err < three_err
+        npt.assert_almost_equal(coeffs(lstsq), np.array([0.05, 0.03]), 2)
+
+    def test_plane_ransac_raises_when_no_plane(self):
+        # a perfectly flat image with an impossible inlier ratio should raise a
+        # readable error rather than an UnboundLocalError
+        flat = np.full((40, 40), 700.0)
+        with self.assertRaises(ValueError):
+            plane_ransac(
+                flat,
+                bg_roi_depth_range=(650, 750),
+                iters=25,
+                noise_tolerance=0.0,
+                in_ratio=0.999999,
+            )
