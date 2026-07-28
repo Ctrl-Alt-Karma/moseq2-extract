@@ -5,6 +5,7 @@ Video pre-processing utilities for detecting ROIs and extracting raw data.
 import cv2
 import joblib
 import tarfile
+import warnings
 import scipy.stats
 import numpy as np
 import scipy.signal
@@ -109,13 +110,33 @@ def get_bground_im_file(frames_file, frame_stride=500, med_scale=5, output_dir=N
         frame_store = []
         for i, frame in enumerate(frame_idx):
             frs = moseq2_extract.io.video.load_movie_data(frames_file,
-                                                          [int(frame)], 
-                                                          frame_size=finfo['dims'], 
-                                                          finfo=finfo, 
+                                                          [int(frame)],
+                                                          frame_size=finfo['dims'],
+                                                          finfo=finfo,
                                                           **kwargs).squeeze()
-            frame_store.append(cv2.medianBlur(frs, med_scale))
+            # depth cameras return 0 for invalid (reflective/absorbing/out-of-
+            # range) pixels. Mask them to NaN BEFORE any spatial filtering so
+            # dropout zeros are neither smeared into neighbouring valid pixels
+            # by the median blur nor counted as real depth in the temporal
+            # median below (which biased the background toward the camera).
+            frs = frs.astype('float64')
+            frs[frs == 0] = np.nan
+            frame_store.append(frs)
 
-        bground = np.nanmedian(frame_store, axis=0)
+        frame_store = np.array(frame_store)
+        with warnings.catch_warnings():
+            # pixels that drop out in every sampled frame produce an all-NaN slice
+            warnings.simplefilter('ignore', category=RuntimeWarning)
+            bground = np.nanmedian(frame_store, axis=0)
+
+        # fill any always-dropout pixels with the median floor depth so they do
+        # not read as spurious near-camera objects during ROI/plane fitting
+        if np.any(np.isnan(bground)):
+            bground[np.isnan(bground)] = np.nanmedian(bground)
+
+        # spatial denoise once, on the clean background (cv2 needs float32 for
+        # a median kernel of size 3 or 5)
+        bground = cv2.medianBlur(bground.astype('float32'), med_scale).astype('float64')
 
         write_image(bground_path, bground, scale=True)
     else:
