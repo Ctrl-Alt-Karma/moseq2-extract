@@ -397,7 +397,17 @@ def read_frames(
         print("Error:", err)
         return None
 
-    video = np.frombuffer(out, dtype=movie_dtype).reshape(
+    # ffmpeg emits the byte order named by pixel_format, so the numpy dtype has
+    # to agree with it. Reading a gray16be stream with a native-endian dtype
+    # byte-swaps every pixel (e.g. a depth of 673mm reads as 41218).
+    read_dtype = np.dtype(movie_dtype)
+    if read_dtype.itemsize > 1 and read_dtype.byteorder in ("=", "|"):
+        if pixel_format.endswith("be"):
+            read_dtype = read_dtype.newbyteorder(">")
+        elif pixel_format.endswith("le"):
+            read_dtype = read_dtype.newbyteorder("<")
+
+    video = np.frombuffer(out, dtype=read_dtype).reshape(
         (len(frames), frame_size[1], frame_size[0])
     )
 
