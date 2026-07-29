@@ -471,8 +471,16 @@ def convert_pxs_to_mm(coords, resolution=(512, 424), field_of_view=(70.6, 60), t
     xhat = coords[:, 0] - cx
     yhat = coords[:, 1] - cy
 
-    fw = resolution[0] / (2 * np.deg2rad(field_of_view[0] / 2))
-    fh = resolution[1] / (2 * np.deg2rad(field_of_view[1] / 2))
+    # Pinhole focal length: f = (resolution / 2) / tan(fov / 2). The previous
+    # code used deg2rad(fov/2) in place of tan(deg2rad(fov/2)) -- the small-angle
+    # approximation -- which overestimates the focal length by ~10-13% and so
+    # underestimates every mm displacement by the same amount. On a 512x424
+    # Kinect2 the pinhole values (fx=361.6, fy=367.2) land within ~2% of the
+    # factory-calibrated intrinsics (~368), where the small-angle values
+    # (fx=415.5, fy=404.9) are ~10-13% off. For best accuracy pass this session's
+    # calibrated fx/fy directly rather than deriving them from the nominal FOV.
+    fw = resolution[0] / (2 * np.tan(np.deg2rad(field_of_view[0] / 2)))
+    fh = resolution[1] / (2 * np.tan(np.deg2rad(field_of_view[1] / 2)))
 
     new_coords = np.zeros_like(coords)
     new_coords[:, 0] = true_depth * xhat / fw
