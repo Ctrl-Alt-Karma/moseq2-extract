@@ -16,6 +16,7 @@ from moseq2_extract.extract.proc import (
     get_largest_cc,
     feature_hampel_filter,
 )
+from moseq2_extract.util import EXTRACT_OUTPUT_POLICIES, scalar_attributes
 
 
 class TestExtractProc(TestCase):
@@ -176,6 +177,66 @@ class TestExtractProc(TestCase):
         assert "velocity_3d_px" not in fake_scalars
         with self.assertRaises(KeyError):
             fake_scalars["velocity_3d_px"]
+
+    def test_compute_scalars_nonzero_velocity_components(self):
+        true_depth = 673.1
+        centroids_px = np.array(
+            [[256.0, 212.0], [259.0, 216.0], [257.0, 221.0]]
+        )
+        heights_mm = np.array([10.0, 14.0, 20.0])
+        frames = np.stack(
+            [np.full((2, 2), height, dtype="float32") for height in heights_mm]
+        )
+        track_features = {
+            "centroid": centroids_px,
+            "orientation": np.zeros(3),
+            "axis_length": np.ones((3, 2)),
+        }
+
+        scalars = compute_scalars(
+            frames,
+            track_features,
+            min_height=0,
+            max_height=100,
+            true_depth=true_depth,
+        )
+
+        # Independently derive the pinhole scale from the documented nominal
+        # camera geometry. Do not call convert_pxs_to_mm here: this test should
+        # fail if either the projection or the velocity composition regresses.
+        focal_x = 512.0 / (2.0 * np.tan(np.deg2rad(70.6 / 2.0)))
+        focal_y = 424.0 / (2.0 * np.tan(np.deg2rad(60.0 / 2.0)))
+        px_deltas = np.vstack((np.zeros(2), np.diff(centroids_px, axis=0)))
+        height_deltas = np.concatenate(([0.0], np.diff(heights_mm)))
+        expected_velocity_2d_px = np.hypot(px_deltas[:, 0], px_deltas[:, 1])
+        expected_velocity_2d_mm = np.hypot(
+            px_deltas[:, 0] * true_depth / focal_x,
+            px_deltas[:, 1] * true_depth / focal_y,
+        )
+        expected_velocity_3d_mm = np.sqrt(
+            np.square(expected_velocity_2d_mm) + np.square(height_deltas)
+        )
+
+        npt.assert_allclose(
+            scalars["velocity_2d_px"], expected_velocity_2d_px, rtol=1e-6
+        )
+        npt.assert_allclose(
+            scalars["velocity_2d_mm"], expected_velocity_2d_mm, rtol=1e-6
+        )
+        npt.assert_allclose(
+            scalars["velocity_3d_mm"], expected_velocity_3d_mm, rtol=1e-6
+        )
+        assert np.all(scalars["velocity_2d_px"][1:] > 0)
+        assert np.all(scalars["velocity_2d_mm"][1:] > 0)
+        assert np.all(scalars["velocity_3d_mm"][1:] > 0)
+        assert "velocity_3d_px" not in scalars
+
+    def test_velocity_3d_px_output_policy(self):
+        assert (
+            EXTRACT_OUTPUT_POLICIES["velocity_3d_px"]
+            == "invalid-mixed-units-omitted"
+        )
+        assert "velocity_3d_px" not in scalar_attributes()
 
     def test_get_largest_cc(self):
 
