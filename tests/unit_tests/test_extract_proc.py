@@ -16,10 +16,27 @@ from moseq2_extract.extract.proc import (
     get_largest_cc,
     feature_hampel_filter,
 )
-from moseq2_extract.util import EXTRACT_OUTPUT_POLICIES, scalar_attributes
+from moseq2_extract.util import (EXTRACT_OUTPUT_POLICIES, convert_pxs_to_mm,
+                                 scalar_attributes)
 
 
 class TestExtractProc(TestCase):
+
+    def test_convert_integer_pixels_to_fractional_millimetres(self):
+        coords = np.asarray([[0, 0], [256, 212], [512, 424]], dtype="int64")
+        converted = convert_pxs_to_mm(coords)
+
+        self.assertTrue(np.issubdtype(converted.dtype, np.floating))
+        npt.assert_allclose(
+            converted,
+            np.asarray([
+                [-476.58136532, -388.61446619],
+                [0.0, 0.0],
+                [476.58136532, 388.61446619],
+            ]),
+            rtol=0,
+            atol=1e-8,
+        )
 
     def test_get_roi(self):
         # load in a bunch of ROIs where we have some ground truth
