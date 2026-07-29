@@ -544,7 +544,9 @@ def compute_scalars(frames, track_features, min_height=10, max_height=100, true_
         'centroid_x_px': np.zeros((nframes,), 'float32'),
         'centroid_y_px': np.zeros((nframes,), 'float32'),
         'velocity_2d_px': np.zeros((nframes,), 'float32'),
-        'velocity_3d_px': np.zeros((nframes,), 'float32'),
+        # velocity_3d_px is deliberately absent: it combined pixel-unit x/y with
+        # millimetre-unit z under one square root, so it had no coherent physical
+        # unit. Use velocity_3d_mm (all mm) or velocity_2d_px (all pixels).
         'width_px': np.zeros((nframes,), 'float32'),
         'length_px': np.zeros((nframes,), 'float32'),
         'area_px': np.zeros((nframes,)),
@@ -601,8 +603,10 @@ def compute_scalars(frames, track_features, min_height=10, max_height=100, true_
     vel_z = np.diff(np.concatenate((features['height_ave_mm'][:1], features['height_ave_mm'])))
 
     features['velocity_2d_px'] = np.hypot(vel_x, vel_y)
-    features['velocity_3d_px'] = np.sqrt(
-        np.square(vel_x)+np.square(vel_y)+np.square(vel_z))
+    # NOTE: no velocity_3d_px. vel_x/vel_y are pixels-per-frame while vel_z is
+    # millimetres-per-frame (height_ave_mm never passes through px_to_mm), so
+    # sqrt(px^2 + px^2 + mm^2) mixes units and is not a physical quantity.
+    # velocity_3d_mm below is dimensionally consistent (all three axes in mm).
 
     vel_x = np.diff(np.concatenate((features['centroid_x_mm'][:1], features['centroid_x_mm'])))
     vel_y = np.diff(np.concatenate((features['centroid_y_mm'][:1], features['centroid_y_mm'])))
