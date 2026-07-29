@@ -10,6 +10,8 @@ import h5py
 import click
 import tarfile
 import warnings
+import datetime
+import subprocess
 import numpy as np
 from glob import glob
 from copy import deepcopy
@@ -19,6 +21,78 @@ from cytoolz import valmap
 from moseq2_extract.io.image import write_image
 from moseq2_extract.io.video import get_movie_info
 from os.path import join, exists, splitext, basename, abspath, dirname
+
+
+# Semantic version tags for the behaviours whose OUTPUT changed relative to
+# the upstream 2021 code. Bump the relevant tag whenever a change alters the
+# numbers written to disk, so a file records which policy produced it and data
+# from before and after a fix can be told apart.
+EXTRACT_OUTPUT_POLICIES = {
+    "scalar_px_to_mm": "pinhole",          # was small-angle approximation
+    "area_units": "mm2-xy-product",        # was linear mm/px factor
+    "background_dropout": "masked",        # dropouts excluded from bg median
+    "roi_plane_fit": "lstsq-inlier-refit",  # was 3-point RANSAC hypothesis
+    "hampel_filter": "mad-threshold-both-axes",
+    "depth_range_detection": "histogram-mode",
+}
+
+
+def _package_git_sha(package_file):
+    """Best-effort git commit of an installed package (editable installs)."""
+    try:
+        pkg_dir = dirname(abspath(package_file))
+        return (
+            subprocess.check_output(
+                ["git", "-C", pkg_dir, "rev-parse", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        return "unknown"
+
+
+def get_pipeline_provenance():
+    """
+    Build a provenance record describing the code that produced an output.
+
+    Returns:
+    provenance (dict): package version, git commit (best effort), write time,
+        and the semantic output-policy tags in EXTRACT_OUTPUT_POLICIES.
+    """
+
+    try:
+        from moseq2_extract import __version__ as version
+    except Exception:
+        version = "unknown"
+
+    return {
+        "package": "moseq2-extract",
+        "version": version,
+        "git_sha": _package_git_sha(__file__),
+        "written": datetime.datetime.now().isoformat(),
+        "policies": dict(EXTRACT_OUTPUT_POLICIES),
+    }
+
+
+def write_pipeline_provenance(h5_file, path="metadata/extraction/pipeline"):
+    """
+    Write the provenance record as a JSON string dataset into an open h5 file.
+
+    Args:
+    h5_file (h5py.File): open, writable h5 file.
+    path (str): dataset path to write the JSON provenance to.
+    """
+
+    provenance = json.dumps(get_pipeline_provenance())
+    if path in h5_file:
+        del h5_file[path]
+    h5_file.create_dataset(path, data=np.string_(provenance))
+    h5_file[path].attrs["description"] = (
+        "JSON provenance: pipeline version, git commit and output-policy tags "
+        "identifying the code that produced this file"
+    )
 
 
 def filter_warnings(func):
