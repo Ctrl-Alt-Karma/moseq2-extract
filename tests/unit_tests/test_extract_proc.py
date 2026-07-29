@@ -164,9 +164,18 @@ class TestExtractProc(TestCase):
         npt.assert_almost_equal(fake_scalars["length_px"], mouse_dims[1] * 2, 0.1)
         npt.assert_almost_equal(fake_scalars["height_ave_mm"], 1, 1)
         npt.assert_almost_equal(fake_scalars["velocity_2d_px"], 0, 1)
-        npt.assert_almost_equal(fake_scalars["velocity_3d_px"], 0, 1)
+        npt.assert_almost_equal(fake_scalars["velocity_2d_mm"], 0, 1)
+        npt.assert_almost_equal(fake_scalars["velocity_3d_mm"], 0, 1)
         npt.assert_almost_equal(fake_scalars["velocity_theta"], 0, 1)
         npt.assert_almost_equal(fake_scalars["area_px"], np.sum(tmp_image), 0.1)
+
+        # velocity_3d_px used to be emitted here as sqrt(px^2 + px^2 + mm^2),
+        # which mixes units and is not a physical quantity. It must not come
+        # back as a plausible-looking number: downstream code that asks for it
+        # should get a KeyError, not a silently wrong value.
+        assert "velocity_3d_px" not in fake_scalars
+        with self.assertRaises(KeyError):
+            fake_scalars["velocity_3d_px"]
 
     def test_get_largest_cc(self):
 

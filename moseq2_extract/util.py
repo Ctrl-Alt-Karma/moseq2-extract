@@ -34,6 +34,7 @@ EXTRACT_OUTPUT_POLICIES = {
     "roi_plane_fit": "lstsq-inlier-refit",  # was 3-point RANSAC hypothesis
     "hampel_filter": "mad-threshold-both-axes",
     "depth_range_detection": "histogram-mode",
+    "velocity_3d_px": "invalid-mixed-units-omitted",
 }
 
 
@@ -527,12 +528,23 @@ def convert_pxs_to_mm(coords, resolution=(512, 424), field_of_view=(70.6, 60), t
 
     Args:
     coords (list): list of x,y pixel coordinates
-    resolution (tuple): image dimensions
-    field_of_view (tuple): width and height scaling params
+    resolution (tuple): image dimensions in pixels, (width, height)
+    field_of_view (tuple): camera angular field of view in DEGREES, (horizontal,
+        vertical). These are view angles, not focal lengths -- the focal lengths
+        are derived from them below.
     true_depth (float): detected true depth
 
     Returns:
     new_coords (list): x,y coordinates in mm
+
+    Note:
+    Focal length is derived from the NOMINAL field of view, not from a
+    per-camera calibration. Every caller in this package uses the defaults above
+    (only true_depth is passed) and there is no CLI or config path to override
+    them, so supplying real calibrated intrinsics is NOT currently supported end
+    to end. Calibrated fx/fy would be more accurate -- the factory values have
+    fx == fy, which no FOV-derived pair does -- but wiring that through the
+    extraction config is future work, not an available option today.
     """
 
     # http://stackoverflow.com/questions/17832238/kinect-intrinsic-parameters-from-field-of-view/18199938#18199938
@@ -551,8 +563,8 @@ def convert_pxs_to_mm(coords, resolution=(512, 424), field_of_view=(70.6, 60), t
     # underestimates every mm displacement by the same amount. On a 512x424
     # Kinect2 the pinhole values (fx=361.6, fy=367.2) land within ~2% of the
     # factory-calibrated intrinsics (~368), where the small-angle values
-    # (fx=415.5, fy=404.9) are ~10-13% off. For best accuracy pass this session's
-    # calibrated fx/fy directly rather than deriving them from the nominal FOV.
+    # (fx=415.5, fy=404.9) are ~10-13% off. See the Note in the docstring: these
+    # are nominal-FOV derived, not calibrated per camera.
     fw = resolution[0] / (2 * np.tan(np.deg2rad(field_of_view[0] / 2)))
     fh = resolution[1] / (2 * np.tan(np.deg2rad(field_of_view[1] / 2)))
 
@@ -575,7 +587,6 @@ def scalar_attributes():
         'centroid_x_px': 'X centroid (pixels)',
         'centroid_y_px': 'Y centroid (pixels)',
         'velocity_2d_px': '2D velocity (pixels / frame), note that missing frames are not accounted for',
-        'velocity_3d_px': '3D velocity (pixels / frame), note that missing frames are not accounted for, also height is in mm, not pixels for calculation',
         'width_px': 'Mouse width (pixels)',
         'length_px': 'Mouse length (pixels)',
         'area_px': 'Mouse area (pixels)',
