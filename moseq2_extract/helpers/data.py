@@ -469,6 +469,11 @@ def create_extract_h5(
         "description"
     ] = "Version of moseq2-extract"
 
+    # Full pipeline provenance: git commit + the output-policy tags that identify
+    # which version of the scalar/ROI/background code produced these values.
+    from moseq2_extract.util import write_pipeline_provenance
+    write_pipeline_provenance(h5_file)
+
     # Extraction Parameters
     from moseq2_extract.cli import extract
 
