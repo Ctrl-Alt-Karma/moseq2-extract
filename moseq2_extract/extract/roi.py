@@ -138,6 +138,15 @@ def plane_ransac(
     )
     coords = coords.T
 
+    # Deterministic RANSAC sampling. The hypothesis sampler previously drew
+    # from the global NumPy RNG, so the same input produced a different plane
+    # on each call and the ROI, extraction, PCA scores and syllable labels all
+    # inherited that nondeterminism. A local RandomState seeded 0 makes the
+    # draw reproducible without touching the global RNG, and without changing
+    # the iteration count, scoring, thresholds, inlier logic or the
+    # least-squares refit below.
+    rng = np.random.RandomState(0)
+
     best_dist = np.inf
     best_num = 0
     best_plane = None
@@ -146,7 +155,7 @@ def plane_ransac(
 
     for _ in tqdm(range(iters), disable=not progress_bar, desc="Finding plane"):
 
-        sel = coords[np.random.choice(coords.shape[0], 3, replace=False)]
+        sel = coords[rng.choice(coords.shape[0], 3, replace=False)]
         tmp_plane = plane_fit3(sel)
 
         if np.all(np.isnan(tmp_plane)):

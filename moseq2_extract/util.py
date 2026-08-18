@@ -31,7 +31,9 @@ EXTRACT_OUTPUT_POLICIES = {
     "scalar_px_to_mm": "pinhole",          # was small-angle approximation
     "area_units": "mm2-xy-product",        # was linear mm/px factor
     "background_dropout": "masked",        # dropouts excluded from bg median
-    "roi_plane_fit": "lstsq-inlier-refit",  # was 3-point RANSAC hypothesis
+    # RANSAC hypothesis sampling is drawn from a local RandomState seeded 0,
+    # so repeated runs on identical input produce a bit-identical plane/ROI.
+    "roi_plane_fit": "lstsq-inlier-refit-deterministic-rng0",  # was 3-point RANSAC hypothesis, unseeded global RNG
     "hampel_filter": "mad-threshold-both-axes",
     "depth_range_detection": "histogram-mode",
     "velocity_3d_px": "invalid-mixed-units-omitted",
